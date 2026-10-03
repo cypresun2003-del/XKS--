@@ -75,6 +75,14 @@ export function validBaseUrl(value: string) {
     return !url.username && !url.password && !url.search && !url.hash && (url.protocol === 'https:' || (url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)));
   } catch { return false; }
 }
+// DeepSeek 官方接口默认开启「思考模式」：模型会先输出一整段不可见的推理，再给正文。
+// 实测同一道题，思考模式消耗 1118 个输出 token（其中 919 个是推理），关闭后只要 211 个，
+// 且连接测试只用 32 token 时正文会被推理吃空、直接判定为调用失败。
+// DeepSeek 用 thinking:{type:'disabled'} 关闭它；其他 OpenAI 兼容服务不认识这个字段，
+// 因此只在官方域名下附带，避免影响自定义接口。
+function thinkingOptions(baseUrl: string): Record<string, unknown> {
+  try { return new URL(baseUrl).hostname.endsWith('deepseek.com') ? { thinking: { type: 'disabled' } } : {}; } catch { return {}; }
+}
 export class CloudAI {
   constructor(private fetcher: Fetcher = fetch) {}
   async request(connection: ConnectionSettings, system: string, payload: unknown, json = true, signal: AbortSignal = AbortSignal.timeout(45000)) {
@@ -86,7 +94,7 @@ export class CloudAI {
       response = await this.fetcher(endpoint, {
         method: 'POST', redirect: 'error', signal,
         headers: { Authorization: 'Bearer ' + connection.apiKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: connection.model, messages: [{ role: 'system', content: system }, { role: 'user', content: JSON.stringify(payload) }], stream: false, max_tokens: json ? 5000 : 32, ...(json ? { response_format: { type: 'json_object' } } : {}) }),
+        body: JSON.stringify({ model: connection.model, messages: [{ role: 'system', content: system }, { role: 'user', content: JSON.stringify(payload) }], stream: false, max_tokens: json ? 5000 : 32, ...thinkingOptions(connection.baseUrl), ...(json ? { response_format: { type: 'json_object' } } : {}) }),
       });
     } catch (error) {
       if (signal.aborted || error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name)) throw new AppError(504, '模型响应超过 45 秒。输入已保留，你可以稍后重试。');
