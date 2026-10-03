@@ -42,7 +42,7 @@ export function createApp(store: Store, ai = new CloudAI()) {
   const analysisInput = z.object({ fingerprint: z.string().min(1), revision: z.number().int().positive(), consent: z.literal(true), requestId: z.string().uuid().optional() });
   const autoTitle = (title: string, problem: string, channel: Decision['channel']) => title || (channel === 'full' ? '' : problem.slice(0, 60));
 
-  app.get('/api/health', (_req, res) => res.json({ ok: true, product: '第二视角', version: '0.2.1' }));
+  app.get('/api/health', (_req, res) => res.json({ ok: true, product: '第二视角', version: '0.2.2', reviewFlow: 'explicit-confirmation' }));
   app.get('/api/bootstrap', (_req, res) => res.json({ context: store.context(), employees: store.employees(), groups: store.groups(), decisions: store.decisions(), connection: store.publicConnection() }));
   app.put('/api/context', (req, res) => { const context = contextSchema.parse(req.body); store.saveSetting('context', context); res.json(context); });
   app.post('/api/employees', (req, res) => {
@@ -94,7 +94,7 @@ export function createApp(store: Store, ai = new CloudAI()) {
     if (input.channel === 'quick' && input.employeeIds.length) throw new AppError(400, '快速分析只使用本次描述，不携带员工档案。需要结合档案时，请使用深度决策。');
     checkEmployees(input.employeeIds);
     const time = now();
-    const decision: Decision = { id: id(), channel: input.channel, temporaryContext: input.temporaryContext, title: autoTitle(input.title, input.problem, input.channel), problem: input.problem, employeeIds: input.employeeIds, initialPlan: input.initialPlan, originalPlan: null, revision: 1, status: 'draft', createdAt: time, updatedAt: time, analyses: [], finals: [], reviews: [] };
+    const decision: Decision = { id: id(), channel: input.channel, temporaryContext: input.temporaryContext, title: autoTitle(input.title, input.problem, input.channel), problem: input.problem, employeeIds: input.employeeIds, initialPlan: input.initialPlan, originalPlan: null, revision: 1, status: 'draft', createdAt: time, updatedAt: time, analyses: [], finals: [], reviews: [], helpfulSelections: [] };
     store.putDecision(decision); res.status(201).json(decision);
   });
   app.get('/api/decisions/:id', (req, res) => res.json(store.decision(req.params.id)));
@@ -105,7 +105,8 @@ export function createApp(store: Store, ai = new CloudAI()) {
     input.title = autoTitle(input.title, input.problem, decision.channel);
     const changed = ['title', 'problem', 'initialPlan', 'employeeIds', 'temporaryContext'].some(key => JSON.stringify(input[key as keyof typeof input]) !== JSON.stringify(decision[key as keyof Decision]));
     if (!changed) return res.json(decision);
-    Object.assign(decision, { title: input.title, problem: input.problem, initialPlan: input.initialPlan, employeeIds: input.employeeIds, temporaryContext: input.temporaryContext, status: 'draft' });
+    const substantiveChange = ['problem', 'initialPlan', 'employeeIds', 'temporaryContext'].some(key => JSON.stringify(input[key as keyof typeof input]) !== JSON.stringify(decision[key as keyof Decision]));
+    Object.assign(decision, { title: input.title, problem: input.problem, initialPlan: input.initialPlan, employeeIds: input.employeeIds, temporaryContext: input.temporaryContext, status: substantiveChange ? 'draft' : decision.status });
     res.json(touch(decision));
   });
   app.post('/api/decisions/:id/upgrade', (req, res) => {
@@ -177,16 +178,35 @@ export function createApp(store: Store, ai = new CloudAI()) {
     decision.finals.push({ id: id(), createdAt: now(), mode: input.mode, text: input.text, analysisId: input.analysisId, adoptedOptionId: input.adoptedOptionId, snapshot: data, followup: { dueAt: followupDays === null ? null : new Date(Date.now() + followupDays * 86400000).toISOString(), status: followupDays === null ? 'none' : 'pending' } });
     decision.status = 'decided'; res.json(touch(decision));
   });
+  app.post('/api/decisions/:id/helpful', (req, res) => {
+    const input = z.object({ source: z.enum(['original', 'ai']), analysisId: z.string().uuid(), perspectiveId: z.string().nullable(), requestId: z.string().uuid(), revision: z.number().int().positive() }).parse(req.body);
+    const decision = store.decision(req.params.id);
+    const previous = decision.helpfulSelections.find(s => s.requestId === input.requestId);
+    if (previous) {
+      if (previous.source !== input.source || previous.analysisId !== input.analysisId || previous.perspectiveId !== input.perspectiveId) throw new AppError(409, '请求已用于另一个角度，请重新打开记录。');
+      return res.json(decision);
+    }
+    checkRevision(decision, input.revision);
+    if (jobs.has(decision.id)) throw new AppError(409, '请等待分析完成。');
+    const analysis = decision.analyses.at(-1);
+    if (!analysis || analysis.id !== input.analysisId || decision.status === 'draft') throw new AppError(409, '问题已修改，请重新分析后记录。');
+    const option = analysis.result.perspectives.find(p => p.id === input.perspectiveId);
+    if (input.source === 'ai' ? !option : input.perspectiveId !== null || !analysis.snapshot.initialPlan.trim()) throw new AppError(400, '请选择当前展示的角度。');
+    decision.helpfulSelections.push({ id: id(), createdAt: now(), requestId: input.requestId, source: input.source, analysisId: analysis.id, perspectiveId: input.perspectiveId, text: input.source === 'original' ? analysis.snapshot.initialPlan : option!.plan, snapshot: analysis.snapshot });
+    decision.status = 'helpful'; res.json(touch(decision));
+  });
   app.post('/api/decisions/:id/reviews', (req, res) => {
     const input = reviewInputSchema.parse(req.body), decision = store.decision(req.params.id); checkRevision(decision, input.revision);
     if (decision.channel !== 'full') throw new AppError(400, '回访仅适用于深度决策。快速分析可先升级。');
     if (input.resultStatus === null && !input.outcome?.trim()) throw new AppError(400, '请选择这次的实际结果，再保存回访。');
-    const final = decision.finals.at(-1); if (!final) throw new AppError(400, '先确认最终决定，再记录实际结果。');
+    const selection = decision.helpfulSelections.at(-1);
+    const final = selection || decision.finals.at(-1); if (!final) throw new AppError(400, '先记录有帮助的角度，再反馈实际结果。');
     if (final.snapshot.channel !== 'full' || decision.status === 'draft' || decision.status === 'analyzed') throw new AppError(400, '请先确认当前深度决策版本的最终决定，再记录回访。');
     const outcome = input.outcome?.trim() || ['结果：' + (input.resultStatus === null ? '历史反馈' : resultStatusLabels[input.resultStatus]), '意外情况：' + (input.surprise || '未填写'), '回看当初判断：' + (input.hindsight || '未填写')].join('\n');
-    decision.reviews.push({ id: id(), finalId: final.id, outcome, resultStatus: input.resultStatus, surprise: input.surprise, hindsight: input.hindsight, satisfaction: input.satisfaction, createdAt: now(), summary: null, model: null, suggestions: [], requestId: null, fingerprint: null });
-    final.followup = input.resultStatus === 'pending' ? { dueAt: new Date(Date.now() + 14 * 86400000).toISOString(), status: 'pending' } : { ...final.followup, status: 'done' };
-    decision.status = input.resultStatus === 'pending' ? 'decided' : 'reviewed'; res.json(touch(decision));
+    decision.reviews.push({ id: id(), finalId: selection ? null : final.id, selectionId: selection?.id ?? null, outcome, resultStatus: input.resultStatus, surprise: input.surprise, hindsight: input.hindsight, satisfaction: input.satisfaction, createdAt: now(), summary: null, model: null, suggestions: [], requestId: null, fingerprint: null, confirmedAt: null });
+    const legacyFinal = !selection ? decision.finals.at(-1) : undefined;
+    if (legacyFinal) legacyFinal.followup = input.resultStatus === 'pending' ? { dueAt: new Date(Date.now() + 14 * 86400000).toISOString(), status: 'pending' } : { ...legacyFinal.followup, status: 'done' };
+    decision.status = selection ? 'helpful' : 'decided'; res.json(touch(decision));
   });
   app.get('/api/decisions/:id/reviews/:reviewId/preview', (req, res) => {
     const decision = store.decision(req.params.id), review = decision.reviews.find(r => r.id === req.params.reviewId);
@@ -216,6 +236,18 @@ export function createApp(store: Store, ai = new CloudAI()) {
       });
       target.summary = result.summary; target.model = connection.model; target.suggestions = suggestions; target.requestId = requestId; target.fingerprint = input.fingerprint; res.json(touch(current));
     } finally { jobs.delete(decision.id); requestJobs.delete(requestId); }
+  });
+  app.post('/api/decisions/:id/reviews/:reviewId/confirm', (req, res) => {
+    const input = z.object({ revision: z.number().int().positive() }).parse(req.body);
+    const decision = store.decision(req.params.id);
+    checkRevision(decision, input.revision);
+    if (jobs.has(decision.id)) throw new AppError(409, '请等待复盘分析完成。');
+    const review = decision.reviews.at(-1);
+    if (!review || review.id !== req.params.reviewId || !review.summary?.trim() || ['draft', 'analyzed'].includes(decision.status)) throw new AppError(409, '请先生成当前反馈的完整复盘，再确认完成。');
+    if (review.selectionId ? review.selectionId !== decision.helpfulSelections.at(-1)?.id : review.finalId !== decision.finals.at(-1)?.id) throw new AppError(409, '参考角度或决定已有变化，请对当前记录补充反馈后复盘。');
+    if (review.confirmedAt) return res.json(decision);
+    if (review.suggestions.some(s => s.status === 'pending')) throw new AppError(400, '请先逐项选择修改画像或保留原画像，再确认完成复盘。');
+    review.confirmedAt = now(); decision.status = 'reviewed'; res.json(touch(decision));
   });
   app.post('/api/decisions/:id/suggestions/:suggestionId/resolve', (req, res) => {
     const input = z.object({ action: z.enum(['accept', 'reject']), description: employeeInputSchema.shape.description.optional(), expectedVersion: z.number().int().optional(), acknowledgeChanged: z.boolean().optional(), revision: z.number().int() }).parse(req.body);

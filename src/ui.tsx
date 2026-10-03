@@ -3,7 +3,7 @@ import { X, LoaderCircle, LockKeyhole, ShieldCheck, AlertCircle } from 'lucide-r
 import { hasContacts, redactContacts } from '../shared/model';
 
 export function Spinner({ label = '正在准备…' }: { label?: string }) { return <span className="spinner-label"><LoaderCircle size={16} className="spin" />{label}</span>; }
-export function PrivacyNote({ compact = false }: { compact?: boolean }) { return <p className="privacy-note"><LockKeyhole size={13} /><span>{compact ? '记录保存在这台电脑' : '记录保存在本机。仅在你确认后，必要内容才会发送给 AI 服务。'}</span></p>; }
+export function PrivacyNote({ compact = false }: { compact?: boolean }) { return <p className="privacy-note"><LockKeyhole size={13} /><span>{compact ? '记录保存在这台电脑' : '记录保存在本机。点击分析时，问题、已填写的背景和所选员工画像会发送给 AI 服务；本次独立分析不读取初判。'}</span></p>; }
 export function Modal({ title, eyebrow, children, onClose, busy = false, wide = false, className = '' }: { title: string; eyebrow?: string; children: ReactNode; onClose: () => void; busy?: boolean; wide?: boolean; className?: string }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => { const element = ref.current!; element.showModal(); return () => element.close(); }, []);

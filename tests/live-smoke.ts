@@ -16,11 +16,12 @@ const independent = {
 };
 const ai = new CloudAI();
 try {
-  const result = await ai.analyze(connection, { independent, risk: { ...independent, 我的初步打算: '我计划先用一周完成内容，再用一周进行排练和修订。' } });
+  const result = await ai.analyze(connection, { independent, risk: null });
   assert.equal(result.perspectives.length, 3);
   assert.equal(new Set(result.perspectives.map(p => p.angleType)).size, 3);
-  assert(result.riskSummary && !result.riskError);
-  console.log(JSON.stringify({ analysis: 'passed', perspectives: 3, distinctAngles: true, separateRiskCheck: true, model: connection.model, syntheticDataOnly: true }));
+  assert.equal(result.riskSummary, null);
+  assert.equal(result.riskError, null);
+  console.log(JSON.stringify({ analysis: 'passed', perspectives: 3, distinctAngles: true, riskAnalysis: false, model: connection.model, syntheticDataOnly: true }));
   const review = await ai.review(connection, {
     当时的用户画像: independent.用户画像, 当前难题: independent.当前难题,
     我的最终决定: '先完成内容，再进行排练。', 我的实际反馈: '演示按时完成，但排练时间偏少。', 满意度: 4,

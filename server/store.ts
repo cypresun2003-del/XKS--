@@ -77,7 +77,7 @@ export class Store {
     }
     throw new AppError(400, '员工数量已达到上限。');
   }
-  export(): Backup { return { format: 'zhujian-backup', version: 3, exportedAt: now(), context: this.context(), employees: this.employees(), groups: this.groups(), decisions: this.decisions(), history: this.history() }; }
+  export(): Backup { return { format: 'zhujian-backup', version: 4, exportedAt: now(), context: this.context(), employees: this.employees(), groups: this.groups(), decisions: this.decisions(), history: this.history() }; }
   validateBackup(input: unknown): Backup {
     const backup = backupSchema.parse(input);
     const assertUnique = (items: { id: string }[]) => { if (new Set(items.map(i => i.id)).size !== items.length) throw new AppError(400, '备份包含重复记录，未导入。'); };
@@ -96,7 +96,7 @@ export class Store {
       requestIds.add(requestId);
     };
     for (const d of backup.decisions) {
-      assertUnique(d.analyses); assertUnique(d.finals); assertUnique(d.reviews);
+      assertUnique(d.analyses); assertUnique(d.finals); assertUnique(d.reviews); assertUnique(d.helpfulSelections);
       assertUnique(d.analyses.flatMap(a => a.profileCandidates)); assertUnique(d.reviews.flatMap(r => r.suggestions));
       if (d.employeeIds.some(e => !employees.has(e))) throw new AppError(400, '备份中存在缺失的员工引用。');
       if (new Set(d.employeeIds).size !== d.employeeIds.length) throw new AppError(400, '备份中存在重复的员工选择。');
@@ -120,10 +120,17 @@ export class Store {
         if (final.followup.status === 'pending' && !final.followup.dueAt) throw new AppError(400, '待回访记录缺少回访日期。');
         if (final.followup.status === 'none' && final.followup.dueAt) throw new AppError(400, '未安排回访的记录不能包含回访日期。');
       }
+      for (const selection of d.helpfulSelections) {
+        checkRequest(selection.requestId);
+        const analysis = d.analyses.find(a => a.id === selection.analysisId);
+        const option = analysis?.result.perspectives.find(p => p.id === selection.perspectiveId);
+        if (!analysis || (selection.source === 'ai' ? !option || selection.text !== option.plan : selection.perspectiveId !== null || selection.text !== analysis.snapshot.initialPlan) || JSON.stringify(selection.snapshot) !== JSON.stringify(analysis.snapshot)) throw new AppError(400, '备份中的有帮助记录引用不完整。');
+      }
       for (const review of d.reviews) {
         checkRequest(review.requestId);
+        if (review.confirmedAt && (!review.summary?.trim() || review.suggestions.some(s => s.status === 'pending'))) throw new AppError(400, '备份中的已确认复盘缺少总结或仍有未处理的画像建议。');
         if (review.requestId && (!review.fingerprint || review.summary === null)) throw new AppError(400, '备份中的复盘请求记录不完整。');
-        if (!d.finals.some(f => f.id === review.finalId)) throw new AppError(400, '备份中的复盘引用不完整。');
+        if (review.selectionId ? review.finalId !== null || !d.helpfulSelections.some(s => s.id === review.selectionId) : !d.finals.some(f => f.id === review.finalId)) throw new AppError(400, '备份中的复盘引用不完整。');
         assertUnique(review.suggestions);
         if (review.suggestions.some(s => !employees.has(s.employeeId))) throw new AppError(400, '画像建议指向不存在的员工。');
       }

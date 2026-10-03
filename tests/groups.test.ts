@@ -42,7 +42,7 @@ test('员工分组：多组成员、版本冲突、归档限制、备份恢复�
     const bootstrap = (await request('/bootstrap')).value;
     assert.equal(bootstrap.groups.length, 2);
     const backup = (await request('/backup')).value;
-    assert.equal(backup.version, 3); assert.equal(backup.groups.length, 2);
+    assert.equal(backup.version, 4); assert.equal(backup.groups.length, 2);
     assert(!JSON.stringify(backup).includes('group-test-secret'));
     const invalid = structuredClone(backup); invalid.groups[0].employeeIds.push('00000000-0000-4000-8000-000000000000');
     assert.equal((await request('/backup/validate', 'POST', invalid)).status, 400);

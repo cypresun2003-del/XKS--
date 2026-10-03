@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUpRight, ChevronDown, HelpCircle, Paperclip, Plus, X } from 'lucide-react';
 import type { Bootstrap, DraftInput, Employee } from '../shared/model';
 import { hasContacts, meaningfulInitialPlan } from '../shared/model';
@@ -19,6 +19,29 @@ export default function Composer({ data, refresh, notify, startDecision }: {
   const [picker, setPicker] = useState(false), [busy, setBusy] = useState(''), [error, setError] = useState('');
   const [adding, setAdding] = useState(false), [nickname, setNickname] = useState(''), [role, setRole] = useState(''), [description, setDescription] = useState('');
   const [guide, setGuide] = useState(0);
+  const anchor = useRef<HTMLButtonElement>(null), popover = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState({ left: 12, top: 12, maxHeight: 300 });
+  useLayoutEffect(() => {
+    if (!picker) return;
+    const reposition = () => {
+      const a = anchor.current?.getBoundingClientRect(); if (!a) return;
+      const viewport = window.visualViewport;
+      const bottom = (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight);
+      const topEdge = (viewport?.offsetTop || 0) + 12;
+      const height = Math.min(popover.current?.scrollHeight || 290, bottom - topEdge - 12);
+      const below = a.bottom + 8;
+      const top = below + height <= bottom - 12 ? below : Math.max(topEdge, a.top - height - 8);
+      setPosition({ left: Math.max(12, Math.min(a.left, window.innerWidth - Math.min(300, window.innerWidth - 24) - 12)), top, maxHeight: bottom - top - 12 });
+    };
+    reposition();
+    const observer = new ResizeObserver(reposition); if (popover.current) observer.observe(popover.current);
+    const outside = (event: PointerEvent) => { if (!popover.current?.contains(event.target as Node) && !anchor.current?.contains(event.target as Node)) setPicker(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setPicker(false); anchor.current?.focus(); } };
+    window.addEventListener('resize', reposition); window.addEventListener('scroll', reposition, true);
+    window.visualViewport?.addEventListener('resize', reposition);
+    document.addEventListener('pointerdown', outside); document.addEventListener('keydown', escape);
+    return () => { observer.disconnect(); window.removeEventListener('resize', reposition); window.removeEventListener('scroll', reposition, true); window.visualViewport?.removeEventListener('resize', reposition); document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
+  }, [picker]);
   const employees = data.employees.filter(employee => !employee.archived);
   useEffect(() => {
     const available = new Set(data.employees.filter(e => !e.archived).map(e => e.id));
@@ -65,10 +88,10 @@ export default function Composer({ data, refresh, notify, startDecision }: {
         <textarea id="decision-problem" aria-label="你遇到了什么问题？" maxLength={8000} value={problem} onChange={event => setProblem(event.target.value)} placeholder="说说目前的情况、顾虑和你希望达到的结果。" />
       <div className="composer-employee-row">
         <div className="composer-employee-select">
-          <button className="text-button" data-guide="employees" type="button" aria-expanded={picker} onClick={() => setPicker(open => !open)}><Paperclip size={15} />关联员工画像 <span className="field-hint">可选</span><ChevronDown size={14} /></button>
-          {employeeIds.length > 0 && <div className="composer-selected">{employeeIds.map(id => { const e = employees.find(employee => employee.id === id); return e && <button type="button" className="profile-chip" key={id} onClick={() => setEmployeeIds(ids => ids.filter(item => item !== id))}>{e.nickname || e.alias}<X size={12} /></button>; })}</div>}
-          {picker && <div className="employee-popover"><div className="popover-heading"><strong>选择相关员工</strong><button className="icon-button" aria-label="关闭员工选择" onClick={() => setPicker(false)}><X size={15} /></button></div>
-            <EmployeeSelection employees={employees} groups={data.groups || []} selected={employeeIds} onChange={setEmployeeIds} />
+          <button ref={anchor} className="text-button" data-guide="employees" type="button" aria-expanded={picker} onClick={() => setPicker(open => !open)}><Paperclip size={15} />关联员工画像 <span className="field-hint">可选</span><ChevronDown size={14} /></button>
+          {employeeIds.length > 0 && <div className="composer-selected">{employeeIds.slice(0, 2).map(id => { const e = employees.find(employee => employee.id === id); return e && <button type="button" className="profile-chip" key={id} onClick={() => setEmployeeIds(ids => ids.filter(item => item !== id))}>{e.nickname || e.alias}<X size={12} /></button>; })}{employeeIds.length > 2 && <button type="button" className="profile-chip" onClick={() => setPicker(true)}>另 {employeeIds.length - 2} 人</button>}</div>}
+          {picker && <div ref={popover} className="employee-popover compact-popover" role="dialog" aria-label="选择相关员工" style={position}><div className="popover-heading"><strong>选择相关员工</strong><button className="icon-button" aria-label="关闭员工选择" onClick={() => setPicker(false)}><X size={15} /></button></div>
+            <EmployeeSelection compact employees={employees} groups={data.groups || []} selected={employeeIds} onChange={setEmployeeIds} />
             <div className="popover-actions"><button type="button" className="text-button" onClick={() => { setPicker(false); setError(''); setAdding(true); }}><Plus size={14} />新增员工画像</button><button type="button" className="primary" onClick={() => setPicker(false)}>完成</button></div>
           </div>}
         </div>

@@ -19,7 +19,9 @@ export default function App() {
   const [data, setData] = useState<Bootstrap | null>(null), [route, setRoute] = useState(getRoute), [failure, setFailure] = useState(''), [refreshFailure, setRefreshFailure] = useState('');
   const [theme, setTheme] = useState<ThemeMode>(() => { try { return localStorage.getItem('second-perspective-theme') === 'blue' ? 'blue' : 'graphite'; } catch { return 'graphite'; } });
   const [toast, setToast] = useState<{ message: string; error: boolean } | null>(null);
+  const [composerVersion, setComposerVersion] = useState(0);
   const creatingRef = useRef(false);
+  const composerDecisionId = useRef<string | null>(null);
   const guard = useRef<null | (() => Promise<void>)>(null), toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const committedRoute = useRef(route), navigationVersion = useRef(0), refreshVersion = useRef(0);
   const leaving = useRef<{ guard: () => Promise<void>; promise: Promise<void> } | null>(null);
@@ -77,6 +79,7 @@ export default function App() {
       await saveBeforeLeaving();
       if (navigationAtStart !== navigationVersion.current) return;
       const decision = await api<Decision>('/decisions', 'POST', input);
+      composerDecisionId.current = decision.id;
       setData(current => current ? { ...current, decisions: [decision, ...current.decisions.filter(item => item.id !== decision.id)] } : current);
       try { await refresh(); } catch { /* The decision was saved; the refresh banner offers a read-only retry. */ }
       if (navigationAtStart === navigationVersion.current) await navigate('/decisions/' + decision.id + '?analyze=1');
@@ -105,11 +108,11 @@ export default function App() {
     </aside>
     <main className="main-shell">
       {data && refreshFailure && <div className="inline-banner" role="status"><span>{refreshFailure}</span><button className="text-button" onClick={() => refresh().catch(() => {})}>重试刷新</button></div>}
-      {!data ? <div className="loading-page">{failure ? <><CircleHelp size={32} /><h2>暂时连接不到你的空间</h2><p>{failure}</p><button className="primary" onClick={() => refresh().catch(e => setFailure(errorText(e)))}>重新连接</button></> : <Spinner label="正在打开你的私人空间…" />}</div> : props && <Composer {...props} startDecision={startDecision} />}
+      {!data ? <div className="loading-page">{failure ? <><CircleHelp size={32} /><h2>暂时连接不到你的空间</h2><p>{failure}</p><button className="primary" onClick={() => refresh().catch(e => setFailure(errorText(e)))}>重新连接</button></> : <Spinner label="正在打开你的私人空间…" />}</div> : props && <Composer key={composerVersion} {...props} startDecision={startDecision} />}
       <footer className="page-footer"><span>第二视角</span><span>员工画像和决策记录保存在本机。</span></footer>
     </main>
-    {panel && props && <Modal title={panel === 'profile' ? '用户信息' : panel === 'team' ? '员工画像' : panel === 'library' ? '决策库' : panel === 'decision' ? '决策分析与确认' : '设置'} onClose={closePanel} wide className={'workspace-panel ' + (panel === 'decision' ? 'decision-panel' : '')}>
-      {panel === 'profile' ? <UserInfo {...props} /> : panel === 'team' ? <Team {...props} /> : panel === 'library' ? <Dashboard {...props} /> : panel === 'settings' ? <Settings {...props} /> : <DecisionPage key={route} {...props} decisionId={route.split('/')[2].split('?')[0]} analyzeOnOpen={route.includes('analyze=1')} registerGuard={registerGuard} />}
+    {panel && props && <Modal title={panel === 'profile' ? '用户信息' : panel === 'team' ? '员工画像' : panel === 'library' ? '决策库' : panel === 'decision' ? (route.includes('analyze=1') ? '换个角度看' : '决策回看')  : '设置'} onClose={closePanel} wide className={'workspace-panel ' + (panel === 'decision' ? 'decision-panel' : '')}>
+      {panel === 'profile' ? <UserInfo {...props} /> : panel === 'team' ? <Team {...props} /> : panel === 'library' ? <Dashboard {...props} /> : panel === 'settings' ? <Settings {...props} /> : <DecisionPage key={route} {...props} decisionId={route.split('/')[2].split('?')[0]} analyzeOnOpen={route.includes('analyze=1')} registerGuard={registerGuard} onHelpfulRecorded={() => { if (composerDecisionId.current === route.split('/')[2].split('?')[0]) { composerDecisionId.current = null; setComposerVersion(version => version + 1); } }} />}
     </Modal>}
     {toast && <div className={'toast ' + (toast.error ? 'toast-error' : '')} role={toast.error ? 'alert' : 'status'}><span>{toast.message}</span><button aria-label="关闭提示" onClick={() => setToast(null)}><X size={16} /></button></div>}
   </div>;

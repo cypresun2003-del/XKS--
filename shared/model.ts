@@ -13,7 +13,7 @@ export const channelSchema = z.enum(['trial', 'quick', 'full']);
 export const newChannelSchema = z.enum(['quick', 'full']);
 export type DecisionChannel = z.infer<typeof channelSchema>;
 export const channelLabels = { trial: '早期快速分析', quick: '快速分析记录', full: '决策记录' };
-export const angleTypes = ['人事安排', '流程规则', '节奏时机', '资源投入', '对外沟通', '暂不动作'] as const;
+export const angleTypes = ['人事安排', '流程规则', '节奏时机', '资源投入', '对外沟通', '暂不动作', '目标取舍', '验证假设', '行动边界'] as const;
 export const angleTypeSchema = z.enum(angleTypes);
 
 export const contextSchema = z.object({
@@ -43,7 +43,7 @@ export const draftSchema = z.object({
 export type DraftInput = z.infer<typeof draftSchema>;
 export const perspectiveSchema = z.object({
   id: required(100), angleType: angleTypeSchema.nullable(), title: required(100), plan: required(1800),
-  basis: required(1200), risks: required(1200), questions: required(1000),
+  basis: text(1200).default(''), risks: text(1200).default(''), questions: text(1000).default(''),
 });
 export const qualityFlagsSchema = z.object({ angleTypesDuplicated: z.boolean(), degraded: z.boolean() });
 export const analysisResultSchema = z.object({
@@ -81,6 +81,11 @@ export const finalSchema = finalInputSchema.omit({ revision: true, followupDays:
   followup: followupSchema.default({ dueAt: null, status: 'none' }),
 });
 export type FinalDecision = z.infer<typeof finalSchema>;
+export const helpfulSchema = z.object({
+  id: z.string().uuid(), requestId: z.string().uuid(), createdAt: z.string().datetime(),
+  source: z.enum(['original', 'ai']), analysisId: z.string().uuid(), perspectiveId: z.string().nullable(),
+  text: required(12000), snapshot: snapshotSchema,
+});
 export const suggestionSchema = z.object({
   id: z.string().uuid(), employeeId: z.string().uuid(), alias: z.string(), previousDescription: required(3000),
   proposedDescription: required(3000), reason: required(1500), evidence: required(1500), baseVersion: z.number().int().positive(),
@@ -94,9 +99,10 @@ export const reviewInputSchema = z.object({
   outcome: text(8000).optional(), satisfaction: z.number().int().min(1).max(5).default(3), revision: z.number().int().positive(),
 });
 export const reviewSchema = z.object({
-  id: z.string().uuid(), finalId: z.string().uuid(), outcome: required(8000), satisfaction: z.number().int().min(1).max(5).default(3), createdAt: z.string().datetime(),
+  id: z.string().uuid(), finalId: z.string().uuid().nullable().default(null), selectionId: z.string().uuid().nullable().default(null), outcome: required(8000), satisfaction: z.number().int().min(1).max(5).default(3), createdAt: z.string().datetime(),
   resultStatus: resultStatusSchema.nullable().default(null), surprise: text(3000).default(''), hindsight: text(3000).default(''),
   summary: z.string().nullable(), model: z.string().nullable(), suggestions: z.array(suggestionSchema),
+  confirmedAt: z.string().datetime().nullable().default(null),
   requestId: z.string().uuid().nullable().default(null), fingerprint: z.string().nullable().default(null),
 });
 export type Review = z.infer<typeof reviewSchema>;
@@ -107,10 +113,16 @@ export const reviewResultSchema = z.object({
 export const decisionSchema = z.object({
   id: z.string().uuid(), channel: channelSchema.default('full'), temporaryContext: text(4000).default(''),
   title: text(100), problem: text(8000), employeeIds: z.array(z.string().uuid()).max(100), initialPlan: text(8000).default(''),
-  originalPlan: z.string().nullable(), revision: z.number().int().positive(), status: z.enum(['draft', 'analyzed', 'decided', 'reviewed']),
+  originalPlan: z.string().nullable(), revision: z.number().int().positive(), status: z.enum(['draft', 'analyzed', 'helpful', 'decided', 'reviewed']),
   createdAt: z.string().datetime(), updatedAt: z.string().datetime(), analyses: z.array(analysisSchema), finals: z.array(finalSchema), reviews: z.array(reviewSchema),
+  helpfulSelections: z.array(helpfulSchema).default([]),
 });
 export type Decision = z.infer<typeof decisionSchema>;
+// Old backups may say reviewed even though only feedback, not a summary, was saved.
+export function libraryStatus(decision: Decision): 'draft' | 'pending' | 'reviewed' {
+  if (decision.status === 'draft') return 'draft';
+  return decision.status === 'reviewed' && Boolean(decision.reviews.at(-1)?.confirmedAt) ? 'reviewed' : 'pending';
+}
 export const historySchema = z.object({ id: z.string().uuid(), employeeId: z.string().uuid(), previousDescription: z.string(), description: z.string(), source: z.enum(['manual', 'review']), decisionId: z.string().uuid().nullable(), createdAt: z.string().datetime() });
 export type ProfileHistory = z.infer<typeof historySchema>;
 
@@ -130,7 +142,7 @@ export function migrateDecision(input: unknown): unknown {
   return decision;
 }
 export const backupSchema = z.object({
-  format: z.literal('zhujian-backup'), version: z.union([z.literal(1), z.literal(2), z.literal(3)]), exportedAt: z.string().datetime(),
+  format: z.literal('zhujian-backup'), version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]), exportedAt: z.string().datetime(),
   context: contextSchema, employees: z.array(employeeSchema).max(10000),
   groups: z.array(employeeGroupSchema).max(10000).default([]),
   decisions: z.array(z.preprocess(migrateDecision, decisionSchema)).max(10000), history: z.array(historySchema).max(100000),
@@ -140,4 +152,4 @@ export interface ConnectionSettings { baseUrl: string; model: string; apiKey: st
 export interface PublicConnection { baseUrl: string; model: string; hasKey: boolean }
 export interface Bootstrap { context: TeamContext; employees: Employee[]; groups: EmployeeGroup[]; decisions: Decision[]; connection: PublicConnection }
 export const modeLabels = { maintain: '维持原判', revise: '吸收建议修改', adopt: '采纳新视角' };
-export const statusLabels = { draft: '思考中', analyzed: '待确认', decided: '已确认', reviewed: '已复盘' };
+export const statusLabels = { draft: '思考中', analyzed: '待回看', helpful: '已记录', decided: '已确认', reviewed: '已复盘' };

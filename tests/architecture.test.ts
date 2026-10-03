@@ -9,7 +9,7 @@ import type { Decision, DecisionChannel, Employee } from '../shared/model';
 
 type ModelRequest = { messages: { role: string; content: string }[]; [key: string]: unknown };
 type CapturedRequest = { body: ModelRequest; payload: Record<string, any>; kind: 'options' | 'risk' | 'review' };
-const angle = (angleType = '流程规则', title = '明确协作边界') => ({ angleType, title, plan: '先明确各自负责的范围和协调方式。', basis: '根据用户提供的情况，分工仍有待明确。', risks: '规则过细可能增加沟通成本。', questions: '参与者是否认可这次分工？' });
+const angle = (angleType = '流程规则', title = '明确协作边界') => ({ angleType, title, plan: title + '，先核对具体约束再确定做法。', basis: '根据用户提供的情况，分工仍有待明确。', risks: '规则过细可能增加沟通成本。', questions: '参与者是否认可这次分工？' });
 const options = (count = 3) => ({ perspectives: [angle(), angle('暂不动作', '先观察再调整'), angle('资源投入', '补充协调资源')].slice(0, count), unknowns: ['尚未提供可投入的时间。'], profileCandidates: [] as { alias: string; description: string; evidence: string }[] });
 const success = (value: unknown) => new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(value) } }] }), { headers: { 'Content-Type': 'application/json' } });
 const defaultResponder = async (call: CapturedRequest) => success(call.kind === 'risk' ? { riskSummary: '初判需要补充谁来协调出现的分歧。' } : call.kind === 'review' ? { summary: '依据本次结果继续观察。', suggestions: [] } : options());
@@ -54,7 +54,7 @@ async function fixture() {
   };
 }
 
-test('快速分析无初判只调用独立方案；改变初判不改变独立请求，风险检查单独发送', async () => {
+test('改变初判和标题不改变独立请求；不再调用风险分析', async () => {
   const f = await fixture();
   try {
     const decision = await f.decision('quick');
@@ -69,16 +69,12 @@ test('快速分析无初判只调用独立方案；改变初判不改变独立�
     assert.equal(edited.status, 200);
     const second = await f.analyze(edited.value);
     assert.equal(second.status, 200);
-    assert.equal(f.calls.length, 3);
+    assert.equal(f.calls.length, 2);
     const independentWithPlan = f.calls.slice(1).find(c => c.kind === 'options')!;
-    const risk = f.calls.slice(1).find(c => c.kind === 'risk')!;
+    assert(!f.calls.some(c => c.kind === 'risk'));
     assert.deepEqual(independentWithPlan.body, independentWithoutPlan, '独立调用不能获得初判、字数、摘要，或含有初判的标题');
     assert(!JSON.stringify(independentWithPlan.body).includes(sentinel));
-    assert.equal(risk.payload.我的初步打算, sentinel);
-    assert.deepEqual(risk.body.messages.map(m => m.role), ['system', 'user']);
     assert.deepEqual(independentWithPlan.body.messages.map(m => m.role), ['system', 'user']);
-    assert.notEqual(risk.body.messages[0].content, independentWithPlan.body.messages[0].content);
-    assert(!JSON.stringify(risk.payload).includes('明确协作边界'), '风险调用不能混入另一调用生成的方案');
     assert.deepEqual(second.value.analyses[1].sentPayload, second.preview.payload);
     assert.equal(second.value.analyses[1].result.qualityFlags.degraded, false);
     assert.equal(f.store.employees().length, 0);
@@ -132,10 +128,10 @@ test('深度决策允许不关联员工，但必须有有效初判并阻止降�
     assert.deepEqual(withoutProfile.value.analyses[0].snapshot.employees, []);
     assert.equal(withoutProfile.value.analyses[0].result.perspectives.length, 3);
     const independent = f.calls.find(call => call.kind === 'options')!;
-    const risk = f.calls.find(call => call.kind === 'risk')!;
+    assert(!f.calls.some(call => call.kind === 'risk'));
     assert.deepEqual(independent.payload.用户画像, { 称呼: '大叉叉', 行业: '机器人行业', 日常决策介绍: '负责机器人在学校的销售' });
     assert(!JSON.stringify(independent.payload).includes('先与员工明确交付责任。'));
-    assert.equal(risk.payload.我的初步打算, '先与员工明确交付责任。');
+    
     for (const initialPlan of ['', '   ', '无', '没有', '还没想好']) {
       const decision = await f.decision('full', { employeeIds: [], initialPlan });
       assert.equal((await f.request('/decisions/' + decision.id + '/analysis-preview')).status, 400);
@@ -143,19 +139,18 @@ test('深度决策允许不关联员工，但必须有有效初判并阻止降�
       assert.equal((await f.request('/decisions/' + decision.id, 'PUT', { ...decision, channel: 'quick', temporaryContext: '试图修改模式。', employeeIds: [] })).status, 400);
       assert.equal(f.store.decision(decision.id).channel, 'full');
     }
-    assert.equal(f.calls.length, 2);
+    assert.equal(f.calls.length, 1);
   } finally { await f.close(); }
 });
 
-test('重复角度只重试一次；仍重复如实标记，重试改善后清除降级标记', async () => {
+test('重复角度只重试一次；仍重复拒绝保存，改善后正常保存', async () => {
   const f = await fixture();
   try {
     f.setResponder(async () => success({ ...options(), perspectives: [angle(), angle('流程规则', '另一种措辞'), angle('流程规则', '仍是流程规则')] }));
     const decision = await f.decision('quick');
     const result = await f.analyze(decision);
-    assert.equal(result.status, 200); assert.equal(f.calls.length, 2);
-    assert.deepEqual(result.value.analyses[0].result.qualityFlags, { angleTypesDuplicated: true, degraded: true });
-    assert.equal(new Set(result.value.analyses[0].result.perspectives.map((p: any) => p.angleType)).size, 1);
+    assert.equal(result.status, 502); assert.equal(f.calls.length, 2);
+    assert.equal(f.store.decision(decision.id).analyses.length, 0);
     assert.deepEqual(f.calls[0].payload, f.calls[1].payload);
     let attempt = 0;
     f.setResponder(async () => { attempt++; return success(attempt === 1 ? { ...options(), perspectives: [angle(), angle('流程规则', '仍然同角度'), angle('流程规则', '依然相同')] } : options()); });
@@ -178,19 +173,16 @@ test('重复角度只重试一次；仍重复如实标记，重试改善后清�
   } finally { await f.close(); }
 });
 
-test('风险检查单独失败时保留独立方案并记录失败，绝不伪造风险内容', async () => {
+test('移除风险分析：即使填写初判也只发送一次独立请求', async () => {
   const f = await fixture();
   try {
-    f.setResponder(async call => call.kind === 'risk' ? new Response('{}', { status: 401 }) : defaultResponder(call));
-    const result = await f.analyze(await f.decision('quick', { initialPlan: '我打算先调整协作边界。' }));
-    assert.equal(result.status, 200); assert.equal(f.calls.length, 2);
+    const result = await f.analyze(await f.decision('quick', { initialPlan: 'LOCAL_SECRET_INITIAL_PLAN' }));
+    assert.equal(result.status, 200); assert.equal(f.calls.length, 1);
+    assert(!JSON.stringify(f.calls).includes('LOCAL_SECRET_INITIAL_PLAN'));
     const analysis = result.value.analyses[0];
-    assert.equal(analysis.result.perspectives.length, 3);
-    assert.equal(analysis.result.riskSummary, null);
-    assert.match(analysis.result.riskError, /联系支持/);
-    assert.equal(analysis.result.qualityFlags.degraded, true);
-    assert.equal(analysis.result.qualityFlags.angleTypesDuplicated, false);
-    assert.equal(f.store.decision(result.value.id).analyses.length, 1);
+    assert.equal(analysis.result.riskSummary, null); assert.equal(analysis.result.riskError, null);
+    assert(analysis.result.perspectives.every((p: any) => p.risks === ''));
+    assert.equal(analysis.sentPayload.risk, null);
   } finally { await f.close(); }
 });
 
@@ -282,7 +274,7 @@ test('深度决策回访默认30天、未出结果延后14天、完成后关闭�
     assert.equal((await f.request(pendingReviewPath + '/analyze', 'POST', { fingerprint: 'no-result-yet', revision: result.value.revision, requestId: randomUUID(), consent: true })).status, 400);
     assert.equal(f.calls.length, callsBeforePendingReview, '没有实际结果时不得调用模型推断画像');
     result = await f.request('/decisions/' + decision.id + '/reviews', 'POST', { resultStatus: 'smooth', surprise: '没有新的意外。', hindsight: '明确协调人有帮助。', satisfaction: 4, revision: result.value.revision });
-    assert.equal(result.status, 200); assert.equal(result.value.status, 'reviewed');
+    assert.equal(result.status, 200); assert.equal(result.value.status, 'decided');
     assert.equal(result.value.finals[0].followup.status, 'done'); assert.equal(result.value.reviews.length, 2);
     assert.equal(result.value.reviews[1].hindsight, '明确协调人有帮助。');
     assert.deepEqual(f.store.employee(employee.id), employee, '记录回访不得自动修改画像');
