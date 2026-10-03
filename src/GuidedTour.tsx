@@ -2,14 +2,14 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { ArrowRight, X } from 'lucide-react';
 
 const steps = [
-  { target: 'problem', title: '先说说你遇到的事', text: '上半区直接写问题、顾虑和目标。个人选择或工作决策，都从这里开始。' },
-  { target: 'employees', title: '需要时，带上员工画像', text: '这是可选项。选择已有画像，或在这里新建并关联；不关联也可以分析。' },
-  { target: 'plan', title: '先留下你自己的判断', text: '下半区必须填写初步决定，保留你的经验和判断。AI 生成的三个独立方案不会读取这段内容。' },
+  { target: 'problem', title: '你遇到了什么问题？', text: '上半区写下目前的情况、顾虑和希望达到的结果。个人选择或工作决策，都从这里开始。' },
+  { target: 'employees', title: '需要时，带上员工画像', text: '这是可选项。可以逐人多选、按分组选择或全选当前员工，也可以在这里新建画像。' },
+  { target: 'plan', title: '你打算怎么做？', text: '先写下你倾向的做法和理由，再开始分析。AI 生成的三个独立方案不会读取这段初判。' },
   { target: 'analyze', title: '看三个角度，再由你决定', text: '两处都写好后，点分析。核对发送内容后，三个 AI 方案会与你的初判一起展示，最终版本由你确认。' },
   { target: 'profile', title: '让建议了解你的背景', text: '圆形按钮里只需填写昵称、行业和一句话介绍。这里以弹窗打开，关闭后继续原来的输入。' },
-  { target: 'team', title: '画像，由你的观察来写', text: '填写员工昵称、职责和一段主观看法。后续复盘中的画像修改，也必须经你确认。' },
+  { target: 'team', title: '画像，由你的观察来写', text: '填写员工昵称、职责和一段主观看法，也可以把常用员工存成分组。复盘中的画像修改必须经你确认。' },
   { target: 'library', title: '把决定和结果留在一起', text: '在决策库回看思考中的事、已确认的决定，并记录实际效果，完成复盘。' },
-  { target: 'settings', title: '选择适合你的外观', text: '石墨银灰和蓝白在这里切换，也可以配置 AI、备份资料或记录改进建议。现在开始写下第一个问题吧。' },
+  { target: 'settings', title: '管理外观和本机资料', text: '在这里切换石墨银灰和蓝白，备份、恢复或清空资料。遇到问题时，也可以通过反馈邮箱联系我们。' },
 ];
 type Box = { left: number; top: number; width: number; height: number };
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(n, max));

@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { backupSchema, contextSchema, decisionSchema, employeeSchema, historySchema, migrateDecision, type Backup, type ConnectionSettings, type Decision, type Employee, type ProfileHistory, type TeamContext } from '../shared/model';
+import { backupSchema, contextSchema, decisionSchema, employeeSchema, employeeGroupSchema, historySchema, migrateDecision, type Backup, type ConnectionSettings, type Decision, type Employee, type EmployeeGroup, type ProfileHistory, type TeamContext } from '../shared/model';
 
 export class AppError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -17,6 +17,7 @@ export class Store {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS employees (id TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS decisions (id TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS profile_history (id TEXT PRIMARY KEY, data TEXT NOT NULL);');
+    this.db.exec('CREATE TABLE IF NOT EXISTS employee_groups (id TEXT PRIMARY KEY, data TEXT NOT NULL);');
   }
   close() { this.db.close(); }
   transaction<T>(fn: () => T): T {
@@ -24,15 +25,15 @@ export class Store {
     try { const result = fn(); this.db.exec('COMMIT'); return result; }
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
-  private list<T>(table: 'employees' | 'decisions' | 'profile_history'): T[] {
+  private list<T>(table: 'employees' | 'decisions' | 'profile_history' | 'employee_groups'): T[] {
     return (this.db.prepare('SELECT data FROM ' + table).all() as { data: string }[]).map(r => JSON.parse(r.data));
   }
-  private read<T>(table: 'employees' | 'decisions', itemId: string): T {
+  private read<T>(table: 'employees' | 'decisions' | 'employee_groups', itemId: string): T {
     const row = this.db.prepare('SELECT data FROM ' + table + ' WHERE id = ?').get(itemId) as { data: string } | undefined;
     if (!row) throw new AppError(404, '这条记录不存在，可能已被删除。');
     return JSON.parse(row.data);
   }
-  private put(table: 'employees' | 'decisions' | 'profile_history', item: { id: string }) {
+  private put(table: 'employees' | 'decisions' | 'profile_history' | 'employee_groups', item: { id: string }) {
     this.db.prepare('INSERT INTO ' + table + ' (id,data) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(item.id, JSON.stringify(item));
   }
   setting<T>(key: string): T | undefined {
@@ -46,6 +47,10 @@ export class Store {
   employees() { return this.list<unknown>('employees').map(e => employeeSchema.parse(e)).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.alias.localeCompare(b.alias)); }
   employee(employeeId: string) { return employeeSchema.parse(this.read<unknown>('employees', employeeId)); }
   putEmployee(employee: Employee) { this.put('employees', employeeSchema.parse(employee)); }
+  groups() { return this.list<unknown>('employee_groups').map(g => employeeGroupSchema.parse(g)).sort((a, b) => a.createdAt.localeCompare(b.createdAt)); }
+  group(groupId: string) { return employeeGroupSchema.parse(this.read<unknown>('employee_groups', groupId)); }
+  putGroup(group: EmployeeGroup) { this.put('employee_groups', employeeGroupSchema.parse(group)); }
+  deleteGroup(groupId: string) { this.group(groupId); this.db.prepare('DELETE FROM employee_groups WHERE id = ?').run(groupId); }
   decisions() { return this.list<unknown>('decisions').map(d => decisionSchema.parse(migrateDecision(d))).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
   decision(decisionId: string) { return decisionSchema.parse(migrateDecision(this.read<unknown>('decisions', decisionId))); }
   putDecision(decision: Decision) { this.put('decisions', decisionSchema.parse(decision)); }
@@ -72,13 +77,18 @@ export class Store {
     }
     throw new AppError(400, '员工数量已达到上限。');
   }
-  export(): Backup { return { format: 'zhujian-backup', version: 2, exportedAt: now(), context: this.context(), employees: this.employees(), decisions: this.decisions(), history: this.history() }; }
+  export(): Backup { return { format: 'zhujian-backup', version: 3, exportedAt: now(), context: this.context(), employees: this.employees(), groups: this.groups(), decisions: this.decisions(), history: this.history() }; }
   validateBackup(input: unknown): Backup {
     const backup = backupSchema.parse(input);
     const assertUnique = (items: { id: string }[]) => { if (new Set(items.map(i => i.id)).size !== items.length) throw new AppError(400, '备份包含重复记录，未导入。'); };
     assertUnique(backup.employees); assertUnique(backup.decisions); assertUnique(backup.history);
     if (new Set(backup.employees.map(e => e.alias)).size !== backup.employees.length) throw new AppError(400, '备份包含重复员工代号。');
     const employees = new Set(backup.employees.map(e => e.id));
+    assertUnique(backup.groups);
+    if (new Set(backup.groups.map(g => g.name)).size !== backup.groups.length) throw new AppError(400, '备份包含重复分组名称。');
+    for (const group of backup.groups) {
+      if (new Set(group.employeeIds).size !== group.employeeIds.length || group.employeeIds.some(e => !employees.has(e))) throw new AppError(400, '备份中的分组包含重复或不存在的员工。');
+    }
     const requestIds = new Set<string>();
     const checkRequest = (requestId: string | null) => {
       if (!requestId) return;
@@ -124,13 +134,14 @@ export class Store {
   restore(input: Backup) {
     const backup = this.validateBackup(input);
     this.transaction(() => {
-      this.db.exec('DELETE FROM employees; DELETE FROM decisions; DELETE FROM profile_history;');
+      this.db.exec('DELETE FROM employees; DELETE FROM decisions; DELETE FROM profile_history; DELETE FROM employee_groups;');
       this.saveSetting('context', backup.context);
       for (const employee of backup.employees) this.putEmployee(employee);
+      for (const group of backup.groups) this.putGroup(group);
       for (const decision of backup.decisions) this.putDecision(decision);
       for (const history of backup.history) this.put('profile_history', history);
     });
   }
-  clear() { this.transaction(() => { this.db.exec('DELETE FROM employees; DELETE FROM decisions; DELETE FROM profile_history;'); this.saveSetting('context', blankContext); }); }
+  clear() { this.transaction(() => { this.db.exec('DELETE FROM employees; DELETE FROM decisions; DELETE FROM profile_history; DELETE FROM employee_groups;'); this.saveSetting('context', blankContext); }); }
 }
 

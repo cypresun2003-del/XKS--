@@ -187,7 +187,7 @@ test('风险检查单独失败时保留独立方案并记录失败，绝不伪�
     const analysis = result.value.analyses[0];
     assert.equal(analysis.result.perspectives.length, 3);
     assert.equal(analysis.result.riskSummary, null);
-    assert.match(analysis.result.riskError, /密钥/);
+    assert.match(analysis.result.riskError, /联系支持/);
     assert.equal(analysis.result.qualityFlags.degraded, true);
     assert.equal(analysis.result.qualityFlags.angleTypesDuplicated, false);
     assert.equal(f.store.decision(result.value.id).analyses.length, 1);

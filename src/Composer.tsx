@@ -6,6 +6,7 @@ import type { Notify } from './App';
 import { api, errorText } from './api';
 import { FormError, Modal, Spinner, TextArea } from './ui';
 import GuidedTour from './GuidedTour';
+import EmployeeSelection from './EmployeeSelection';
 
 export default function Composer({ data, refresh, notify, startDecision }: {
   data: Bootstrap;
@@ -19,6 +20,10 @@ export default function Composer({ data, refresh, notify, startDecision }: {
   const [adding, setAdding] = useState(false), [nickname, setNickname] = useState(''), [role, setRole] = useState(''), [description, setDescription] = useState('');
   const [guide, setGuide] = useState(0);
   const employees = data.employees.filter(employee => !employee.archived);
+  useEffect(() => {
+    const available = new Set(data.employees.filter(e => !e.archived).map(e => e.id));
+    setEmployeeIds(ids => ids.filter(id => available.has(id)));
+  }, [data.employees]);
   const canAnalyze = Boolean(problem.trim() && meaningfulInitialPlan(initialPlan) && !hasContacts(problem + initialPlan) && !busy);
 
   useEffect(() => {
@@ -56,23 +61,23 @@ export default function Composer({ data, refresh, notify, startDecision }: {
   return <div className="composer-page">
     <section className="question-composer" aria-label="输入决策问题">
       <div className="question-area">
-        <div className="composer-label-row"><label htmlFor="decision-problem" data-guide="problem">用户输入问题区</label><button className="guide-trigger icon-button" aria-label="查看使用说明" onClick={() => { setPicker(false); setGuide(1); }}><HelpCircle size={18} /></button></div>
-        <textarea id="decision-problem" aria-label="用户输入问题区" maxLength={8000} value={problem} onChange={event => setProblem(event.target.value)} placeholder={data.context.nickname ? `${data.context.nickname}，现在有什么事需要想清楚？\n\n写下情况、顾虑，以及你想达到的结果。` : '现在有什么事需要想清楚？\n\n写下情况、顾虑，以及你想达到的结果。'} />
+        <div className="composer-label-row"><label htmlFor="decision-problem" data-guide="problem">你遇到了什么问题？</label><button className="guide-trigger icon-button" aria-label="查看使用说明" onClick={() => { setPicker(false); setGuide(1); }}><HelpCircle size={18} /></button></div>
+        <textarea id="decision-problem" aria-label="你遇到了什么问题？" maxLength={8000} value={problem} onChange={event => setProblem(event.target.value)} placeholder="说说目前的情况、顾虑和你希望达到的结果。" />
       <div className="composer-employee-row">
         <div className="composer-employee-select">
           <button className="text-button" data-guide="employees" type="button" aria-expanded={picker} onClick={() => setPicker(open => !open)}><Paperclip size={15} />关联员工画像 <span className="field-hint">可选</span><ChevronDown size={14} /></button>
           {employeeIds.length > 0 && <div className="composer-selected">{employeeIds.map(id => { const e = employees.find(employee => employee.id === id); return e && <button type="button" className="profile-chip" key={id} onClick={() => setEmployeeIds(ids => ids.filter(item => item !== id))}>{e.nickname || e.alias}<X size={12} /></button>; })}</div>}
           {picker && <div className="employee-popover"><div className="popover-heading"><strong>选择相关员工</strong><button className="icon-button" aria-label="关闭员工选择" onClick={() => setPicker(false)}><X size={15} /></button></div>
-            {employees.length ? employees.map(employee => <label className="employee-option" key={employee.id}><input type="checkbox" checked={employeeIds.includes(employee.id)} onChange={event => setEmployeeIds(ids => event.target.checked ? [...ids, employee.id] : ids.filter(id => id !== employee.id))} /><span><strong>{employee.nickname || employee.alias}</strong><small>{employee.role || employee.alias} · {employee.description}</small></span></label>) : <p className="empty-profiles">还没有员工画像。可以先添加一位，或直接继续。</p>}
+            <EmployeeSelection employees={employees} groups={data.groups || []} selected={employeeIds} onChange={setEmployeeIds} />
             <div className="popover-actions"><button type="button" className="text-button" onClick={() => { setPicker(false); setError(''); setAdding(true); }}><Plus size={14} />新增员工画像</button><button type="button" className="primary" onClick={() => setPicker(false)}>完成</button></div>
           </div>}
         </div>
       </div>
       </div>
       <div className="initial-plan-area">
-        <div className="composer-label-row"><label htmlFor="decision-plan" data-guide="plan">我的初步决定 <span>必填</span></label><span className="independence-hint">AI 的三个方案不读取你的初判</span></div>
-        <textarea id="decision-plan" aria-label="我的初步决定" maxLength={8000} value={initialPlan} onChange={event => setInitialPlan(event.target.value)} placeholder="我目前倾向于……，主要考虑是……" />
-        <div className="composer-submit-row"><span className="composer-submit-note">{hasContacts(problem + initialPlan) ? '请先移除输入中的电话号码或邮箱。' : '留下自己的判断，再看三个独立角度。'}</span><button className="primary composer-submit" data-guide="analyze" disabled={!canAnalyze} onClick={submit}>{busy === 'create' ? <Spinner label="准备中…" /> : <>分析<ArrowUpRight size={17} /></>}</button></div>
+        <div className="composer-label-row"><label htmlFor="decision-plan" data-guide="plan">你打算怎么做？ <span>必填</span></label><span className="independence-hint">AI 的三个独立方案不会读取这段初判</span></div>
+        <textarea id="decision-plan" aria-label="你打算怎么做？" maxLength={8000} value={initialPlan} onChange={event => setInitialPlan(event.target.value)} placeholder="写下你现在倾向的做法和理由。" />
+        <div className="composer-submit-row"><span className="composer-submit-note">{hasContacts(problem + initialPlan) ? '请先移除输入中的电话号码或邮箱。' : '先写下自己的判断，再开始分析。'}</span><button className="primary composer-submit" data-guide="analyze" disabled={!canAnalyze} onClick={submit}>{busy === 'create' ? <Spinner label="准备中…" /> : <>分析<ArrowUpRight size={17} /></>}</button></div>
       </div>
     </section>
     {!adding && <FormError message={error} />}

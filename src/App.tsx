@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BookOpen, UsersRound, Settings2, ArrowUpRight, LockKeyhole, X, CircleHelp, UserRound } from 'lucide-react';
+import { BookOpen, UsersRound, Settings2, X, CircleHelp, UserRound } from 'lucide-react';
 import type { Bootstrap, Decision, DraftInput } from '../shared/model';
 import { api, errorText } from './api';
 import { DataBadge, Spinner, Modal } from './ui';
@@ -91,7 +91,7 @@ export default function App() {
   const closePanel = () => { void navigate('/'); };
   return <div className="app-shell" data-theme={theme}>
     <header className="workspace-header">
-      <button className="brand" onClick={() => navigate('/')} aria-label="第二视角首页"><img src="/mark.svg" alt="" /><span>第二视角<small>个人决策助手</small></span></button>
+      <button className="brand" onClick={() => navigate('/')} aria-label="第二视角首页"><i className="brand-mark" aria-hidden="true" /><span>第二视角<small>个人决策助手</small></span></button>
       <p className="topbar-advisory">AI 提供参考，决策由你确认</p>
       <DataBadge />
     </header>
@@ -102,7 +102,6 @@ export default function App() {
         <button className={active === 'library' ? 'nav-item active' : 'nav-item'} data-guide="library" onClick={() => openPanel('library')}><BookOpen size={18} /><span>决策库</span></button>
         <button className={active === 'settings' ? 'nav-item active' : 'nav-item'} data-guide="settings" onClick={() => openPanel('settings')}><Settings2 size={18} /><span>设置</span></button>
       </nav>
-      <div className="sidebar-bottom"><div className="connection-indicator"><i className={data?.connection.hasKey ? 'online' : ''} /><span>{data?.connection.hasKey ? 'AI 已配置' : 'AI 未连接'}</span><button aria-label="配置 AI 连接" onClick={() => openPanel('settings')}><ArrowUpRight size={15} /></button></div><p><LockKeyhole size={12} />数据保存在本机</p></div>
     </aside>
     <main className="main-shell">
       {data && refreshFailure && <div className="inline-banner" role="status"><span>{refreshFailure}</span><button className="text-button" onClick={() => refresh().catch(() => {})}>重试刷新</button></div>}

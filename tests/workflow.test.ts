@@ -113,7 +113,7 @@ test('模型失败、异常结构和过期预览均不产生分析或丢失草�
     const { decision, preview } = await prepare(f);
     const call = () => f.request('/decisions/' + decision.id + '/analyze', 'POST', { fingerprint: preview.fingerprint, revision: decision.revision, consent: true });
     f.setResponder(async () => new Response('{}', { status: 401 }));
-    let result = await call(); assert.equal(result.status, 502); assert.match(result.value.error, /密钥/);
+    let result = await call(); assert.equal(result.status, 502); assert.match(result.value.error, /联系支持/);
     f.setResponder(async () => success({ riskSummary: '只有一个字段' }));
     result = await call(); assert.equal(result.status, 502);
     f.setResponder(async () => { throw new DOMException('timeout', 'TimeoutError'); });

@@ -5,8 +5,10 @@ import { hasContacts } from '../shared/model';
 import type { PageProps } from './App';
 import { api, dateText, errorText } from './api';
 import { EmptyState, FormError, Modal, PrivacyNote, Spinner, TextArea } from './ui';
+import Groups from './Groups';
 
-export default function Team({ data, refresh, notify }: PageProps) {
+export default function Team(props: PageProps) {
+  const { data, refresh, notify } = props;
   const [showArchived, setShowArchived] = useState(false), [editor, setEditor] = useState<Employee | 'new' | null>(null), [nickname, setNickname] = useState(''), [role, setRole] = useState(''), [description, setDescription] = useState(''), [history, setHistory] = useState<ProfileHistory[]>([]), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const employees = data.employees.filter(e => e.archived === showArchived);
   async function edit(employee: Employee | 'new') {
@@ -18,7 +20,8 @@ export default function Team({ data, refresh, notify }: PageProps) {
     try {
       if (editor === 'new') await api('/employees', 'POST', { nickname, role, description });
       else if (editor) await api('/employees/' + editor.id, 'PUT', { nickname, role, description, version: editor.version });
-      await refresh(); setEditor(null); notify('你的观察已保存在本机。');
+      setEditor(null); notify('你的观察已保存在本机。');
+      try { await refresh(); } catch { /* Saved; use the read-only refresh retry. */ }
     } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
   }
   async function archive(employee: Employee) {
@@ -28,6 +31,7 @@ export default function Team({ data, refresh, notify }: PageProps) {
   }
   return <div className="page team-page"><div className="page-heading"><div><h1>员工画像</h1><p className="page-description">记录员工特点，供分析时参考。一位员工、一条描述就能开始。</p></div><button className="primary" onClick={() => edit('new')}><Plus size={17} />添加员工</button></div>
     <div className="principle-note"><ShieldCheck size={17} /><p>昵称、职责和主观观察由你维护；AI 提出的画像调整建议，需经你确认才会更新。</p></div>
+    <Groups {...props} />
     <div className="filter-tabs" role="tablist" aria-label="员工状态"><button role="tab" aria-selected={!showArchived} className={!showArchived ? 'selected' : ''} onClick={() => setShowArchived(false)}>当前团队 <small>{data.employees.filter(e => !e.archived).length}</small></button><button role="tab" aria-selected={showArchived} className={showArchived ? 'selected' : ''} onClick={() => setShowArchived(true)}>已归档 <small>{data.employees.filter(e => e.archived).length}</small></button></div>
     {employees.length ? <div className="employee-grid">{employees.map((employee, index) => <button className="employee-card" key={employee.id} onClick={() => edit(employee)}><div className="employee-card-head"><span className={'employee-avatar avatar-' + index % 4}>{employee.alias.slice(2)}</span><div><h3>{employee.nickname || employee.alias}</h3><span>{employee.alias} · {employee.role || '未填写职责'}</span></div><ArrowUpRight size={18} /></div><p className="preserve-lines">{employee.description}</p><div className="employee-card-footer"><span>{dateText(employee.updatedAt)} 更新</span><span>第 {employee.version} 版</span></div></button>)}{!showArchived && <button className="add-employee-card" onClick={() => edit('new')}><Plus size={25} strokeWidth={1.3} /><span>添加员工</span><small>昵称、职责、一句话观察</small></button>}</div> : <EmptyState icon={<UsersRound size={29} strokeWidth={1.2} />} title={showArchived ? '还没有归档的员工' : '尚未添加员工'} action={!showArchived && <button className="secondary" onClick={() => edit('new')}><Plus size={15} />添加员工</button>}>{showArchived ? '归档后的画像不会用于新任务的默认选择，历史记录仍会保留。' : '添加员工昵称、职责，再写一句你对他的观察。'}</EmptyState>}
     <PrivacyNote />

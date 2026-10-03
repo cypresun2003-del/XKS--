@@ -27,6 +27,14 @@ export const employeeSchema = z.object({
   version: z.number().int().positive(), archived: z.boolean(), createdAt: z.string().datetime(), updatedAt: z.string().datetime(),
 });
 export type Employee = z.infer<typeof employeeSchema>;
+export const employeeGroupInputSchema = z.object({
+  name: required(60), employeeIds: z.array(z.string().uuid()).max(10000),
+});
+export const employeeGroupSchema = employeeGroupInputSchema.extend({
+  id: z.string().uuid(), version: z.number().int().positive(),
+  createdAt: z.string().datetime(), updatedAt: z.string().datetime(),
+});
+export type EmployeeGroup = z.infer<typeof employeeGroupSchema>;
 export const draftSchema = z.object({
   channel: newChannelSchema.default('full'), temporaryContext: text(4000).default(''),
   title: text(100).default(''), problem: text(8000), employeeIds: z.array(z.string().uuid()).max(100).default([]),
@@ -122,13 +130,14 @@ export function migrateDecision(input: unknown): unknown {
   return decision;
 }
 export const backupSchema = z.object({
-  format: z.literal('zhujian-backup'), version: z.union([z.literal(1), z.literal(2)]), exportedAt: z.string().datetime(),
+  format: z.literal('zhujian-backup'), version: z.union([z.literal(1), z.literal(2), z.literal(3)]), exportedAt: z.string().datetime(),
   context: contextSchema, employees: z.array(employeeSchema).max(10000),
+  groups: z.array(employeeGroupSchema).max(10000).default([]),
   decisions: z.array(z.preprocess(migrateDecision, decisionSchema)).max(10000), history: z.array(historySchema).max(100000),
 });
 export type Backup = z.infer<typeof backupSchema>;
 export interface ConnectionSettings { baseUrl: string; model: string; apiKey: string }
 export interface PublicConnection { baseUrl: string; model: string; hasKey: boolean }
-export interface Bootstrap { context: TeamContext; employees: Employee[]; decisions: Decision[]; connection: PublicConnection }
+export interface Bootstrap { context: TeamContext; employees: Employee[]; groups: EmployeeGroup[]; decisions: Decision[]; connection: PublicConnection }
 export const modeLabels = { maintain: '维持原判', revise: '吸收建议修改', adopt: '采纳新视角' };
-export const statusLabels = { draft: '草稿', analyzed: '待确认', decided: '已确认', reviewed: '已复盘' };
+export const statusLabels = { draft: '思考中', analyzed: '待确认', decided: '已确认', reviewed: '已复盘' };

@@ -1,6 +1,6 @@
 import express, { type ErrorRequestHandler } from 'express';
 import { z, ZodError } from 'zod';
-import { contextSchema, employeeInputSchema, draftSchema, finalInputSchema, reviewInputSchema, meaningfulInitialPlan, resultStatusLabels, type Decision } from '../shared/model';
+import { contextSchema, employeeInputSchema, employeeGroupInputSchema, draftSchema, finalInputSchema, reviewInputSchema, meaningfulInitialPlan, resultStatusLabels, type Decision } from '../shared/model';
 import { AppError, Store, now, id } from './store';
 import { CloudAI, analysisPreview, reviewPreview, snapshot, validBaseUrl } from './ai';
 
@@ -43,7 +43,7 @@ export function createApp(store: Store, ai = new CloudAI()) {
   const autoTitle = (title: string, problem: string, channel: Decision['channel']) => title || (channel === 'full' ? '' : problem.slice(0, 60));
 
   app.get('/api/health', (_req, res) => res.json({ ok: true, product: '第二视角', version: '0.2.1' }));
-  app.get('/api/bootstrap', (_req, res) => res.json({ context: store.context(), employees: store.employees(), decisions: store.decisions(), connection: store.publicConnection() }));
+  app.get('/api/bootstrap', (_req, res) => res.json({ context: store.context(), employees: store.employees(), groups: store.groups(), decisions: store.decisions(), connection: store.publicConnection() }));
   app.put('/api/context', (req, res) => { const context = contextSchema.parse(req.body); store.saveSetting('context', context); res.json(context); });
   app.post('/api/employees', (req, res) => {
     const input = employeeInputSchema.parse(req.body), time = now();
@@ -63,6 +63,30 @@ export function createApp(store: Store, ai = new CloudAI()) {
     employee.archived = input.archived; employee.version++; employee.updatedAt = now(); store.putEmployee(employee); res.json(employee);
   });
   app.get('/api/employees/:id/history', (req, res) => { store.employee(req.params.id); res.json(store.history(req.params.id)); });
+
+  const checkGroup = (input: z.infer<typeof employeeGroupInputSchema>, groupId?: string) => {
+    checkEmployees(input.employeeIds);
+    if (store.groups().some(g => g.id !== groupId && g.name === input.name)) throw new AppError(400, '已有同名分组，请换一个名称。');
+  };
+  app.post('/api/employee-groups', (req, res) => {
+    const input = employeeGroupInputSchema.parse(req.body); checkGroup(input);
+    if (input.employeeIds.some(e => store.employee(e).archived)) throw new AppError(400, '请选择当前员工创建分组。');
+    const time = now(), group = { ...input, id: id(), version: 1, createdAt: time, updatedAt: time };
+    store.putGroup(group); res.status(201).json(group);
+  });
+  app.put('/api/employee-groups/:id', (req, res) => {
+    const input = employeeGroupInputSchema.extend({ version: z.number().int().positive() }).parse(req.body), group = store.group(req.params.id);
+    if (input.version !== group.version) throw new AppError(409, '分组已有更新，请重新打开后再修改。');
+    checkGroup(input, group.id);
+    if (input.employeeIds.some(e => store.employee(e).archived && !group.employeeIds.includes(e))) throw new AppError(400, '不能向分组新增已归档员工。');
+    store.putGroup({ ...group, name: input.name, employeeIds: input.employeeIds, version: group.version + 1, updatedAt: now() });
+    res.json(store.group(group.id));
+  });
+  app.delete('/api/employee-groups/:id', (req, res) => {
+    const group = store.group(req.params.id);
+    if (Number(req.get('X-Group-Version')) !== group.version) throw new AppError(409, '分组已有更新，请刷新后再删除。');
+    store.deleteGroup(group.id); res.json({ ok: true });
+  });
 
   app.post('/api/decisions', (req, res) => {
     if (req.body.channel === 'trial') throw new AppError(400, '试用已合并为快速分析，请使用快速分析或深度决策。');
@@ -224,7 +248,7 @@ export function createApp(store: Store, ai = new CloudAI()) {
   });
   app.post('/api/settings/connection/test', async (_req, res) => { await ai.test(store.connection()); res.json({ ok: true, message: '连接成功，模型可以正常响应。测试未发送业务资料。' }); });
   app.get('/api/backup', (_req, res) => { res.setHeader('Content-Disposition', 'attachment; filename="zhujian-backup-' + now().slice(0, 10) + '.json"'); res.json(store.export()); });
-  app.post('/api/backup/validate', (req, res) => { const backup = store.validateBackup(req.body); res.json({ employees: backup.employees.length, decisions: backup.decisions.length, exportedAt: backup.exportedAt }); });
+  app.post('/api/backup/validate', (req, res) => { const backup = store.validateBackup(req.body); res.json({ employees: backup.employees.length, groups: backup.groups.length, decisions: backup.decisions.length, exportedAt: backup.exportedAt }); });
   app.post('/api/backup/restore', (req, res) => { noJobs(); if (req.get('X-Confirm-Restore') !== 'replace') throw new AppError(400, '请先确认整库恢复。'); const backup = store.validateBackup(req.body); store.restore(backup); res.json({ ok: true }); });
   app.delete('/api/data', (req, res) => { noJobs(); if (req.get('X-Confirm-Clear') !== 'clear-local-data') throw new AppError(400, '请先确认清空。'); store.clear(); res.json({ ok: true }); });
   app.use('/api', (_req, _res, next) => next(new AppError(404, '找不到这个操作。')));

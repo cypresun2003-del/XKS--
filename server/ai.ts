@@ -70,7 +70,7 @@ export function validBaseUrl(value: string) {
 export class CloudAI {
   constructor(private fetcher: Fetcher = fetch) {}
   async request(connection: ConnectionSettings, system: string, payload: unknown, json = true, signal: AbortSignal = AbortSignal.timeout(45000)) {
-    if (!connection.apiKey.trim()) throw new AppError(428, '还没有配置 AI 密钥。请先在设置中连接模型，你的草稿已经保留。');
+    if (!connection.apiKey.trim()) throw new AppError(428, '分析服务暂不可用，请联系支持。你的草稿已经保留。');
     if (!validBaseUrl(connection.baseUrl)) throw new AppError(400, '模型接口地址必须是 HTTPS，或本机 HTTP 地址。');
     const endpoint = connection.baseUrl.replace(/[/]+$/, '') + '/chat/completions';
     let response: Response;
@@ -82,10 +82,10 @@ export class CloudAI {
       });
     } catch (error) {
       if (signal.aborted || error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name)) throw new AppError(504, '模型响应超过 45 秒。输入已保留，你可以稍后重试。');
-      throw new AppError(502, '无法连接模型服务，请检查网络和接口地址。输入已保留。');
+      throw new AppError(502, '暂时无法连接分析服务，请稍后重试或联系支持。输入已保留。');
     }
     if (!response.ok) {
-      const messages: Record<number, string> = { 401: 'AI 密钥无效或已过期，请在设置中更新。', 403: '这个密钥没有访问该模型的权限。', 402: 'AI 服务余额不足，请检查服务商账户。', 404: '找不到接口或模型，请检查接口地址和模型名称。', 429: '模型服务暂时限流或额度不足，请稍后重试。' };
+      const messages: Record<number, string> = { 401: '分析服务暂不可用，请联系支持。', 403: '当前分析服务不可用，请联系支持。', 402: '分析服务额度暂不可用，请联系支持。', 404: '分析服务暂不可用，请联系支持。', 429: '模型服务暂时限流或额度不足，请稍后重试。' };
       throw new AppError(502, messages[response.status] || '模型服务暂时无法完成请求（' + response.status + '）。输入已保留。');
     }
     let body: any;
